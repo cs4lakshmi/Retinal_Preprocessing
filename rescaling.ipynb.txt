@@ -1,0 +1,115 @@
+# import libraries + dataset
+
+from google.colab import drive
+import matplotlib.pyplot as plotter_lib
+import numpy as np
+import PIL as image_lib
+import tensorflow as tflow
+from tensorflow.keras import backend as K
+from tensorflow.keras.layers import Flatten
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.metrics import Precision
+import pathlib
+import os
+import glob
+import cv2
+
+drive.mount("/content/drive/")
+data_directory = "/content/drive/MyDrive/Retinal_1120/"
+
+# dataset splits into training and validation
+img_height, img_width = 180, 180
+batch_size = 32
+train_ds = tflow.keras.preprocessing.image_dataset_from_directory(
+    data_directory,
+    validation_split=0.2, #20% validation and 80% training
+    subset="training",
+    seed=123, label_mode='categorical',
+    image_size=(img_height, img_width),
+    batch_size=batch_size)
+
+class_names = train_ds.class_names
+print(class_names)
+
+max_value = 1
+min_value = -1
+rescale_layer = tflow.keras.layers.Rescaling(scale=1.0/(max_value - min_value), offset=-min_value/(max_value - min_value))
+
+train_ds = train_ds.map(lambda x, y: (rescale_layer(x), y))
+
+# create validation subset
+validation_ds = tflow.keras.preprocessing.image_dataset_from_directory(
+    data_directory,
+    validation_split=0.2,
+    subset="validation",
+    seed=123,
+    label_mode='categorical',
+    image_size=(img_height, img_width),
+    batch_size=batch_size)
+
+validation_ds = validation_ds.map(lambda x, y: (rescale_layer(x), y))
+
+# visualize six random images from the dataset
+import matplotlib.pyplot as plotter_lib
+plotter_lib.figure(figsize=(10, 10))
+epochs=50
+for images, labels in train_ds.take(1):
+  for var in range(6):
+    ax = plotter_lib.subplot(3, 3, var + 1)
+    plotter_lib.imshow(images[var].numpy().astype("uint8"))
+    plotter_lib.axis("off")
+
+# import the ResNet-50 model from the keras library
+resnet_model = Sequential()
+
+pretrained_model= tflow.keras.applications.ResNet50(
+    include_top=False,
+    input_shape=(180,180,3),
+    pooling='avg',
+    classes=4,
+    weights='imagenet')
+for each_layer in pretrained_model.layers:
+        each_layer.trainable=False #set to true
+resnet_model.add(pretrained_model)
+
+# add a fully connected output layer to the model (where the learning can happen)
+resnet_model.add(Flatten())
+resnet_model.add(Dense(512, activation='relu'))
+resnet_model.add(Dense(4, activation='softmax')) # softmax function creates four neurons to classify four retinal disease classes
+
+# train model on training dataset
+resnet_model.compile(optimizer='adam',loss='categorical_crossentropy',metrics=['accuracy', Precision(name='precision')])
+history = resnet_model.fit(train_ds, validation_data=validation_ds, epochs=epochs)
+
+print(history.history.keys())
+
+# evaluate ResNet-50 model after training
+
+#accuracy
+plotter_lib.figure(figsize=(8, 8))
+epochs_range= range(epochs)
+plotter_lib.plot(epochs_range, history.history['accuracy'], label="Training Accuracy")
+plotter_lib.plot(epochs_range, history.history['val_accuracy'], label="Validation Accuracy")
+plotter_lib.axis(ymin=0.4,ymax=1)
+plotter_lib.grid()
+plotter_lib.title('Model Accuracy')
+plotter_lib.ylabel('Accuracy')
+plotter_lib.xlabel('Epochs')
+plotter_lib.legend(['train', 'validation'])
+plotter_lib.savefig('output-plot.png')
+
+# Accuracy, false positives, and false negatives in a graph.
+plotter_lib.figure(figsize=(18, 6))
+
+# Plot Precision
+plotter_lib.subplot(1, 4, 1)
+plotter_lib.plot(history.history['precision'], label='Precision')
+plotter_lib.title('Precision')
+plotter_lib.xlabel('Epoch')
+plotter_lib.ylabel('Precision')
+plotter_lib.legend()
+
+plotter_lib.tight_layout()
+plotter_lib.show()
